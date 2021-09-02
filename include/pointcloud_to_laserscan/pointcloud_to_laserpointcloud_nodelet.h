@@ -46,10 +46,12 @@
 #include <nodelet/nodelet.h>
 #include <ros/ros.h>
 #include <sensor_msgs/PointCloud2.h>
+#include <sensor_msgs/LaserScan.h>
 #include <string>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/message_filter.h>
 #include <tf2_ros/transform_listener.h>
+#include <laser_geometry/laser_geometry.h>
 
 namespace pointcloud_to_laserscan
 {
@@ -82,6 +84,8 @@ private:
   boost::shared_ptr<tf2_ros::TransformListener> tf2_listener_;
   message_filters::Subscriber<sensor_msgs::PointCloud2> sub_;
   boost::shared_ptr<MessageFilter> message_filter_;
+
+  laser_geometry::LaserProjection projector_;
 
   // ROS Parameters
   unsigned int input_queue_size_;
