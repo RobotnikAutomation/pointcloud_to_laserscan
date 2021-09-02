@@ -153,7 +153,7 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
   laser_output.header = cloud_msg->header;
   if (!target_laserscan_frame_.empty())
   {
-    output.header.frame_id = target_laserscan_frame_;
+    laser_output.header.frame_id = target_laserscan_frame_;
   }
 
   laser_output.angle_min = angle_min_;
@@ -182,7 +182,7 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
   sensor_msgs::PointCloud2Ptr cloud;
 
   // Transform cloud if necessary
-  if (!(output.header.frame_id == cloud_msg->header.frame_id))
+  if (!(laser_output.header.frame_id == cloud_msg->header.frame_id))
   {
     try
     {
