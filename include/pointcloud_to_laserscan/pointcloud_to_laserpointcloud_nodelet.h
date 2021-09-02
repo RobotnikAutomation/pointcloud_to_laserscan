@@ -78,6 +78,7 @@ private:
 
   ros::NodeHandle nh_, private_nh_;
   ros::Publisher pub_;
+  ros::Publisher pub_laserscan_;
   boost::mutex connect_mutex_;
 
   boost::shared_ptr<tf2_ros::Buffer> tf2_;
@@ -89,7 +90,7 @@ private:
 
   // ROS Parameters
   unsigned int input_queue_size_;
-  std::string target_frame_;
+  std::string target_frame_, target_laserscan_frame_;
   double tolerance_;
   double min_height_, max_height_, angle_min_, angle_max_, angle_increment_, scan_time_, range_min_, range_max_, min_intensity_;
   bool use_inf_;

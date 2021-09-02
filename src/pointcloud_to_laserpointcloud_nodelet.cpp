@@ -56,6 +56,7 @@ void PointCloudToLaserPointCloudNodelet::onInit()
   boost::mutex::scoped_lock lock(connect_mutex_);
   private_nh_ = getPrivateNodeHandle();
 
+  private_nh_.param<std::string>("target_laserscan_frame", target_laserscan_frame_, "");
   private_nh_.param<std::string>("target_frame", target_frame_, "");
   private_nh_.param<double>("transform_tolerance", tolerance_, 0.01);
   private_nh_.param<double>("min_height", min_height_, std::numeric_limits<double>::min());
@@ -96,6 +97,7 @@ void PointCloudToLaserPointCloudNodelet::onInit()
   }
 
   // if pointcloud target frame specified, we need to filter by transform availability
+  // TODO: target_laserscan_frame_
   if (!target_frame_.empty())
   {
     tf2_.reset(new tf2_ros::Buffer());
@@ -111,12 +113,14 @@ void PointCloudToLaserPointCloudNodelet::onInit()
 
   pub_ = nh_.advertise<sensor_msgs::PointCloud2>("cloud", 10, boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
                                               boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
+  pub_laserscan_ = nh_.advertise<sensor_msgs::LaserScan>("laserscan", 10, boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
+                                              boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
 }
 
 void PointCloudToLaserPointCloudNodelet::connectCb()
 {
   boost::mutex::scoped_lock lock(connect_mutex_);
-  if (pub_.getNumSubscribers() > 0 && sub_.getSubscriber().getNumPublishers() == 0)
+  if ((pub_.getNumSubscribers() > 0 || pub_laserscan_.getNumSubscribers() > 0) && sub_.getSubscriber().getNumPublishers() == 0)
   {
     NODELET_INFO("Got a subscriber to scan, starting subscriber to pointcloud");
     sub_.subscribe(nh_, "cloud_in", input_queue_size_);
@@ -126,7 +130,7 @@ void PointCloudToLaserPointCloudNodelet::connectCb()
 void PointCloudToLaserPointCloudNodelet::disconnectCb()
 {
   boost::mutex::scoped_lock lock(connect_mutex_);
-  if (pub_.getNumSubscribers() == 0)
+  if (pub_.getNumSubscribers() == 0 || pub_laserscan_.getNumSubscribers() == 0)
   {
     NODELET_INFO("No subscibers to scan, shutting down subscriber to pointcloud");
     sub_.unsubscribe();
@@ -147,6 +151,11 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
   // build laserscan laser_output using the same frame as the original cloud
   sensor_msgs::LaserScan laser_output;
   laser_output.header = cloud_msg->header;
+  if (!target_laserscan_frame_.empty())
+  {
+    output.header.frame_id = target_laserscan_frame_;
+  }
+
   laser_output.angle_min = angle_min_;
   laser_output.angle_max = angle_max_;
   laser_output.angle_increment = angle_increment_;
@@ -170,7 +179,27 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
   laser_output.intensities.assign(ranges_size, 0);
 
   sensor_msgs::PointCloud2ConstPtr cloud_out;
-  cloud_out = cloud_msg;
+  sensor_msgs::PointCloud2Ptr cloud;
+
+  // Transform cloud if necessary
+  if (!(output.header.frame_id == cloud_msg->header.frame_id))
+  {
+    try
+    {
+      cloud.reset(new sensor_msgs::PointCloud2);
+      tf2_->transform(*cloud_msg, *cloud, target_laserscan_frame_, ros::Duration(tolerance_));
+      cloud_out = cloud;
+    }
+    catch (tf2::TransformException& ex)
+    {
+      NODELET_ERROR_STREAM("Transform failure: " << ex.what());
+      return;
+    }
+  }
+  else
+  {
+    cloud_out = cloud_msg;
+  }
 
   // Iterate through pointcloud
   for (sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud_out, "x"), iter_y(*cloud_out, "y"),
@@ -240,6 +269,7 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
     }
   }
   pub_.publish(*scan_cloud);
+  pub_laserscan_.publish(laser_output);
 }
 }  // namespace pointcloud_to_laserscan
 
