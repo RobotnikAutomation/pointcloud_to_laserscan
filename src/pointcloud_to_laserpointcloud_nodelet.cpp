@@ -130,7 +130,7 @@ void PointCloudToLaserPointCloudNodelet::connectCb()
 void PointCloudToLaserPointCloudNodelet::disconnectCb()
 {
   boost::mutex::scoped_lock lock(connect_mutex_);
-  if (pub_.getNumSubscribers() == 0 || pub_laserscan_.getNumSubscribers() == 0)
+  if (pub_.getNumSubscribers() == 0 && pub_laserscan_.getNumSubscribers() == 0)
   {
     NODELET_INFO("No subscibers to scan, shutting down subscriber to pointcloud");
     sub_.unsubscribe();
