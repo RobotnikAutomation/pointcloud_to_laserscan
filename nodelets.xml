@@ -21,3 +21,16 @@
   </class>
 
 </library>
+
+<library path="lib/libpointcloud_to_laserpointcloud">
+
+  <class name="pointcloud_to_laserscan/pointcloud_to_laserpointcloud_nodelet"
+	 type="pointcloud_to_laserscan::PointCloudToLaserPointCloudNodelet"
+	 base_class_type="nodelet::Nodelet">
+    <description>
+      Nodelet to convert sensor_msgs/PointCloud2 to sensor_msgs/PointCloud2 containing the same points that a sensor_msgs/LaserScan would contain.
+      Useful to change sensor origin without affecting the data, given that sensor_msgs/LaserScan uses angular ranges and resolutions to reconstruct data.
+    </description>
+  </class>
+
+</library>
