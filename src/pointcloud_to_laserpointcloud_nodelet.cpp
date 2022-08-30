@@ -111,16 +111,19 @@ void PointCloudToLaserPointCloudNodelet::onInit()
     sub_.registerCallback(boost::bind(&PointCloudToLaserPointCloudNodelet::cloudCb, this, _1));
   }
 
-  pub_ = nh_.advertise<sensor_msgs::PointCloud2>("cloud", 10, boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
-                                              boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
-  pub_laserscan_ = nh_.advertise<sensor_msgs::LaserScan>("laserscan", 10, boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
-                                              boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
+  pub_ = nh_.advertise<sensor_msgs::PointCloud2>("cloud", 10,
+                                                 boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
+                                                 boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
+  pub_laserscan_ = nh_.advertise<sensor_msgs::LaserScan>(
+      "laserscan", 10, boost::bind(&PointCloudToLaserPointCloudNodelet::connectCb, this),
+      boost::bind(&PointCloudToLaserPointCloudNodelet::disconnectCb, this));
 }
 
 void PointCloudToLaserPointCloudNodelet::connectCb()
 {
   boost::mutex::scoped_lock lock(connect_mutex_);
-  if ((pub_.getNumSubscribers() > 0 || pub_laserscan_.getNumSubscribers() > 0) && sub_.getSubscriber().getNumPublishers() == 0)
+  if ((pub_.getNumSubscribers() > 0 || pub_laserscan_.getNumSubscribers() > 0) &&
+      sub_.getSubscriber().getNumPublishers() == 0)
   {
     NODELET_INFO("Got a subscriber to scan, starting subscriber to pointcloud");
     sub_.subscribe(nh_, "cloud_in", input_queue_size_);
@@ -138,7 +141,7 @@ void PointCloudToLaserPointCloudNodelet::disconnectCb()
 }
 
 void PointCloudToLaserPointCloudNodelet::failureCb(const sensor_msgs::PointCloud2ConstPtr& cloud_msg,
-                                             tf2_ros::filter_failure_reasons::FilterFailureReason reason)
+                                                   tf2_ros::filter_failure_reasons::FilterFailureReason reason)
 {
   NODELET_WARN_STREAM_THROTTLE(1.0, "Can't transform pointcloud from frame " << cloud_msg->header.frame_id << " to "
                                                                              << message_filter_->getTargetFramesString()
@@ -203,8 +206,8 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
 
   // Iterate through pointcloud
   for (sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud_out, "x"), iter_y(*cloud_out, "y"),
-       iter_z(*cloud_out, "z"); //, iter_i(*cloud_out, "intensity");
-       iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z/*, ++iter_i*/)
+       iter_z(*cloud_out, "z");  //, iter_i(*cloud_out, "intensity");
+       iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z /*, ++iter_i*/)
   {
     if (std::isnan(*iter_x) || std::isnan(*iter_y) || std::isnan(*iter_z))
     {
@@ -235,11 +238,12 @@ void PointCloudToLaserPointCloudNodelet::cloudCb(const sensor_msgs::PointCloud2C
     double angle = atan2(*iter_y, *iter_x);
     if (angle < laser_output.angle_min || angle > laser_output.angle_max)
     {
-      NODELET_DEBUG("rejected for angle %f not in range (%f, %f)\n", angle, laser_output.angle_min, laser_output.angle_max);
+      NODELET_DEBUG("rejected for angle %f not in range (%f, %f)\n", angle, laser_output.angle_min,
+                    laser_output.angle_max);
       continue;
     }
 
-    double intensity = 0; //*iter_i;
+    double intensity = 0;  //*iter_i;
     // overwrite range at laserscan ray if new range is smaller
     int index = (angle - laser_output.angle_min) / laser_output.angle_increment;
     if (range < laser_output.ranges[index] and intensity >= min_intensity_)
