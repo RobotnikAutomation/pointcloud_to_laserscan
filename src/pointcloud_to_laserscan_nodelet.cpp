@@ -239,7 +239,7 @@ void PointCloudToLaserScanNodelet::cloudCb(const sensor_msgs::PointCloud2ConstPt
     double intensity = *iter_i;
     // overwrite range at laserscan ray if new range is smaller
     int index = (angle - output.angle_min) / output.angle_increment;
-    if (range < output.ranges[index] and intensity >= min_intensity_)
+    if (range < output.ranges[index] && intensity >= min_intensity_)
     {
       output.ranges[index] = range;
       output.intensities[index] = intensity;
