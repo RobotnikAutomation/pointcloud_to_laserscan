@@ -91,6 +91,7 @@ private:
          min_intensity_;
   bool use_inf_;
   double inf_epsilon_;
+  std::string intensity_field_name_;
 };
 
 }  // namespace pointcloud_to_laserscan
