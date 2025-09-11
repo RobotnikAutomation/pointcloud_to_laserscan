@@ -70,6 +70,7 @@ void PointCloudToLaserScanNodelet::onInit()
   private_nh_.param<double>("range_max", range_max_, std::numeric_limits<double>::max());
   private_nh_.param<double>("inf_epsilon", inf_epsilon_, 1.0);
 
+  private_nh_.param<std::string>("intensity_field_name", intensity_field_name_, "intensity");
   private_nh_.param<double>("min_intensity", min_intensity_, 0.0);
 
   int concurrency_level;
@@ -200,7 +201,7 @@ void PointCloudToLaserScanNodelet::cloudCb(const sensor_msgs::PointCloud2ConstPt
 
   // Iterate through pointcloud
   for (sensor_msgs::PointCloud2ConstIterator<float> iter_x(*cloud_out, "x"), iter_y(*cloud_out, "y"),
-       iter_z(*cloud_out, "z"), iter_i(*cloud_out, "intensity");
+       iter_z(*cloud_out, "z"), iter_i(*cloud_out, intensity_field_name_);
        iter_x != iter_x.end(); ++iter_x, ++iter_y, ++iter_z, ++iter_i)
   {
     if (std::isnan(*iter_x) || std::isnan(*iter_y) || std::isnan(*iter_z))
