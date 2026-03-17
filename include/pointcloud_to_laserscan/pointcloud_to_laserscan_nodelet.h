@@ -85,7 +85,7 @@ private:
 
   // ROS Parameters
   unsigned int input_queue_size_;
-  std::string target_frame_;
+    std::string target_frame_, intensity_field_name_;
   double tolerance_;
   double min_height_, max_height_, angle_min_, angle_max_, angle_increment_, scan_time_, range_min_, range_max_,
          min_intensity_;
