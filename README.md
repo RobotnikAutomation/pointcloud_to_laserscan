@@ -23,6 +23,7 @@ This ROS 2 component projects `sensor_msgs/msg/PointCloud2` messages into `senso
 * `angle_max` (double, default: π) - The maximum scan angle in radians.
 * `angle_increment` (double, default: π/180) - Resolution of laser scan in radians per ray.
 * `queue_size` (double, default: detected number of cores) - Input point cloud queue size.
+* `always_subscribe` (bool, default: false) - Keep the `cloud_in` subscription active even when there are no `scan` subscribers.
 * `scan_time` (double, default: 1.0/30.0) - The scan rate in seconds. Only used to populate the scan_time field of the output laser scan message.
 * `range_min` (double, default: 0.0) - The minimum ranges to return in meters.
 * `range_max` (double, default: 1.8e+308) - The maximum ranges to return in meters.

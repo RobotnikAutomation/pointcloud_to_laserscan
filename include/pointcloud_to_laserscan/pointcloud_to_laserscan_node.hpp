@@ -42,6 +42,7 @@
 #define POINTCLOUD_TO_LASERSCAN__POINTCLOUD_TO_LASERSCAN_NODE_HPP_
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <thread>
@@ -76,6 +77,8 @@ public:
 private:
   void cloudCallback(sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_msg);
 
+  void diagnosticsTimerCallback();
+
   void subscriptionListenerThreadLoop();
 
   std::unique_ptr<tf2_ros::Buffer> tf2_;
@@ -86,9 +89,13 @@ private:
 
   std::thread subscription_listener_thread_;
   std::atomic_bool alive_{true};
+  rclcpp::TimerBase::SharedPtr diagnostics_timer_;
 
   // ROS Parameters
   int input_queue_size_;
+  bool always_subscribe_;
+  double diagnostics_timeout_sec_;
+  std::atomic<int64_t> last_publish_ns_{0};
   std::string target_frame_;
   double tolerance_;
   double min_height_, max_height_, angle_min_, angle_max_, angle_increment_, scan_time_, range_min_,

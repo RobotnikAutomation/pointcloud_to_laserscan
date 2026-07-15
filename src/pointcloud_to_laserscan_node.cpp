@@ -64,6 +64,8 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   // achievable by the associated executor
   input_queue_size_ = this->declare_parameter(
     "queue_size", static_cast<int>(std::thread::hardware_concurrency()));
+  always_subscribe_ = this->declare_parameter("always_subscribe", false);
+  diagnostics_timeout_sec_ = this->declare_parameter("diagnostics_timeout_sec", 2.0);
   min_height_ = this->declare_parameter("min_height", std::numeric_limits<double>::min());
   max_height_ = this->declare_parameter("max_height", std::numeric_limits<double>::max());
   angle_min_ = this->declare_parameter("angle_min", -M_PI);
@@ -76,6 +78,7 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   use_inf_ = this->declare_parameter("use_inf", true);
 
   pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS());
+  last_publish_ns_.store(this->now().nanoseconds());
 
   using std::placeholders::_1;
   // if pointcloud target frame specified, we need to filter by transform availability
@@ -95,14 +98,54 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
     sub_.registerCallback(std::bind(&PointCloudToLaserScanNode::cloudCallback, this, _1));
   }
 
-  subscription_listener_thread_ = std::thread(
-    std::bind(&PointCloudToLaserScanNode::subscriptionListenerThreadLoop, this));
+  diagnostics_timer_ = this->create_wall_timer(
+    std::chrono::seconds(1),
+    std::bind(&PointCloudToLaserScanNode::diagnosticsTimerCallback, this));
+
+  if (always_subscribe_) {
+    rclcpp::SensorDataQoS qos;
+    qos.keep_last(input_queue_size_);
+    sub_.subscribe(this, "cloud_in", qos.get_rmw_qos_profile());
+    RCLCPP_INFO(
+      this->get_logger(),
+      "'always_subscribe' enabled, pointcloud subscriber started");
+  } else {
+    subscription_listener_thread_ = std::thread(
+      std::bind(&PointCloudToLaserScanNode::subscriptionListenerThreadLoop, this));
+  }
 }
 
 PointCloudToLaserScanNode::~PointCloudToLaserScanNode()
 {
   alive_.store(false);
-  subscription_listener_thread_.join();
+  if (subscription_listener_thread_.joinable()) {
+    subscription_listener_thread_.join();
+  }
+}
+
+void PointCloudToLaserScanNode::diagnosticsTimerCallback()
+{
+  if (diagnostics_timeout_sec_ <= 0.0) {
+    return;
+  }
+
+  if (!always_subscribe_ && !sub_.getSubscriber()) {
+    return;
+  }
+
+  const int64_t now_ns = this->now().nanoseconds();
+  const int64_t age_ns = now_ns - last_publish_ns_.load();
+  const double age_sec = static_cast<double>(age_ns) / 1e9;
+
+  if (age_sec <= diagnostics_timeout_sec_) {
+    return;
+  }
+
+  RCLCPP_WARN_THROTTLE(
+    this->get_logger(), *this->get_clock(), 5000,
+    "No LaserScan publish for %.2fs. If cloud_in is active, check TF availability, "
+    "scan subscribers/QoS compatibility, and point filtering params.",
+    age_sec);
 }
 
 void PointCloudToLaserScanNode::subscriptionListenerThreadLoop()
@@ -228,6 +271,7 @@ void PointCloudToLaserScanNode::cloudCallback(
     }
   }
   pub_->publish(std::move(scan_msg));
+  last_publish_ns_.store(this->now().nanoseconds());
 }
 
 }  // namespace pointcloud_to_laserscan
