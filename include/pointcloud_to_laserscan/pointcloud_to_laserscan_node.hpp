@@ -79,6 +79,10 @@ private:
 
   void diagnosticsTimerCallback();
 
+  rclcpp::QoS makeInputQos() const;
+
+  void resubscribe();
+
   void subscriptionListenerThreadLoop();
 
   std::unique_ptr<tf2_ros::Buffer> tf2_;
@@ -93,9 +97,16 @@ private:
 
   // ROS Parameters
   int input_queue_size_;
+  std::string input_qos_reliability_;
+  std::string input_qos_durability_;
   bool always_subscribe_;
+  bool auto_resubscribe_on_stall_;
+  bool exit_on_cloud_stall_;
   double diagnostics_timeout_sec_;
+  double resubscribe_cooldown_sec_;
   std::atomic<int64_t> last_publish_ns_{0};
+  std::atomic<int64_t> last_cloud_ns_{0};
+  std::atomic<int64_t> last_resubscribe_ns_{0};
   std::string target_frame_;
   double tolerance_;
   double min_height_, max_height_, angle_min_, angle_max_, angle_increment_, scan_time_, range_min_,

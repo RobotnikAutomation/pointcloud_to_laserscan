@@ -40,7 +40,10 @@
 
 #include "pointcloud_to_laserscan/pointcloud_to_laserscan_node.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -64,8 +67,36 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
   // achievable by the associated executor
   input_queue_size_ = this->declare_parameter(
     "queue_size", static_cast<int>(std::thread::hardware_concurrency()));
+  input_qos_reliability_ = this->declare_parameter("input_qos_reliability", "best_effort");
+  input_qos_durability_ = this->declare_parameter("input_qos_durability", "volatile");
+
+  auto to_lower = [](std::string value) {
+      std::transform(
+        value.begin(), value.end(), value.begin(),
+        [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+      return value;
+    };
+  input_qos_reliability_ = to_lower(input_qos_reliability_);
+  input_qos_durability_ = to_lower(input_qos_durability_);
+  if (input_qos_reliability_ != "best_effort" && input_qos_reliability_ != "reliable") {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "Unsupported input_qos_reliability='%s', falling back to 'best_effort'",
+      input_qos_reliability_.c_str());
+    input_qos_reliability_ = "best_effort";
+  }
+  if (input_qos_durability_ != "volatile" && input_qos_durability_ != "transient_local") {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "Unsupported input_qos_durability='%s', falling back to 'volatile'",
+      input_qos_durability_.c_str());
+    input_qos_durability_ = "volatile";
+  }
   always_subscribe_ = this->declare_parameter("always_subscribe", false);
+  auto_resubscribe_on_stall_ = this->declare_parameter("auto_resubscribe_on_stall", false);
+  exit_on_cloud_stall_ = this->declare_parameter("exit_on_cloud_stall", true);
   diagnostics_timeout_sec_ = this->declare_parameter("diagnostics_timeout_sec", 2.0);
+  resubscribe_cooldown_sec_ = this->declare_parameter("resubscribe_cooldown_sec", 15.0);
   min_height_ = this->declare_parameter("min_height", std::numeric_limits<double>::min());
   max_height_ = this->declare_parameter("max_height", std::numeric_limits<double>::max());
   angle_min_ = this->declare_parameter("angle_min", -M_PI);
@@ -79,6 +110,7 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
 
   pub_ = this->create_publisher<sensor_msgs::msg::LaserScan>("scan", rclcpp::SensorDataQoS());
   last_publish_ns_.store(this->now().nanoseconds());
+  last_cloud_ns_.store(this->now().nanoseconds());
 
   using std::placeholders::_1;
   // if pointcloud target frame specified, we need to filter by transform availability
@@ -102,13 +134,22 @@ PointCloudToLaserScanNode::PointCloudToLaserScanNode(const rclcpp::NodeOptions &
     std::chrono::seconds(1),
     std::bind(&PointCloudToLaserScanNode::diagnosticsTimerCallback, this));
 
+  RCLCPP_INFO(
+    this->get_logger(),
+    "always_subscribe=%s, auto_resubscribe_on_stall=%s, exit_on_cloud_stall=%s, diagnostics_timeout=%.1fs, "
+    "resubscribe_cooldown=%.1fs, queue_size=%d, input_qos_reliability=%s, "
+    "input_qos_durability=%s",
+    always_subscribe_ ? "true" : "false",
+    auto_resubscribe_on_stall_ ? "true" : "false",
+    exit_on_cloud_stall_ ? "true" : "false",
+    diagnostics_timeout_sec_,
+    resubscribe_cooldown_sec_,
+    input_queue_size_,
+    input_qos_reliability_.c_str(),
+    input_qos_durability_.c_str());
+
   if (always_subscribe_) {
-    rclcpp::SensorDataQoS qos;
-    qos.keep_last(input_queue_size_);
-    sub_.subscribe(this, "cloud_in", qos.get_rmw_qos_profile());
-    RCLCPP_INFO(
-      this->get_logger(),
-      "'always_subscribe' enabled, pointcloud subscriber started");
+    resubscribe();
   } else {
     subscription_listener_thread_ = std::thread(
       std::bind(&PointCloudToLaserScanNode::subscriptionListenerThreadLoop, this));
@@ -123,6 +164,33 @@ PointCloudToLaserScanNode::~PointCloudToLaserScanNode()
   }
 }
 
+ rclcpp::QoS PointCloudToLaserScanNode::makeInputQos() const
+ {
+   rclcpp::QoS qos{rclcpp::KeepLast(static_cast<size_t>(input_queue_size_))};
+   if (input_qos_reliability_ == "reliable") {
+     qos.reliability(RMW_QOS_POLICY_RELIABILITY_RELIABLE);
+   } else {
+     qos.reliability(RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT);
+   }
+
+   if (input_qos_durability_ == "transient_local") {
+     qos.durability(RMW_QOS_POLICY_DURABILITY_TRANSIENT_LOCAL);
+   } else {
+     qos.durability(RMW_QOS_POLICY_DURABILITY_VOLATILE);
+   }
+   return qos;
+ }
+
+void PointCloudToLaserScanNode::resubscribe()
+{
+  sub_.unsubscribe();
+
+  const auto qos = makeInputQos();
+  sub_.subscribe(this, "cloud_in", qos.get_rmw_qos_profile());
+  last_resubscribe_ns_.store(this->now().nanoseconds());
+  RCLCPP_INFO(this->get_logger(), "cloud_in subscription (re)established");
+}
+
 void PointCloudToLaserScanNode::diagnosticsTimerCallback()
 {
   if (diagnostics_timeout_sec_ <= 0.0) {
@@ -134,18 +202,59 @@ void PointCloudToLaserScanNode::diagnosticsTimerCallback()
   }
 
   const int64_t now_ns = this->now().nanoseconds();
-  const int64_t age_ns = now_ns - last_publish_ns_.load();
-  const double age_sec = static_cast<double>(age_ns) / 1e9;
+  const double scan_age_sec =
+    static_cast<double>(now_ns - last_publish_ns_.load()) / 1e9;
+  const double cloud_age_sec =
+    static_cast<double>(now_ns - last_cloud_ns_.load()) / 1e9;
 
-  if (age_sec <= diagnostics_timeout_sec_) {
+  if (scan_age_sec <= diagnostics_timeout_sec_) {
     return;
   }
 
-  RCLCPP_WARN_THROTTLE(
-    this->get_logger(), *this->get_clock(), 5000,
-    "No LaserScan publish for %.2fs. If cloud_in is active, check TF availability, "
-    "scan subscribers/QoS compatibility, and point filtering params.",
-    age_sec);
+  if (cloud_age_sec > diagnostics_timeout_sec_) {
+    const std::string cloud_topic = sub_.getSubscriber() ?
+      sub_.getSubscriber()->get_topic_name() :
+      this->get_node_topics_interface()->resolve_topic_name("cloud_in");
+    const size_t cloud_publishers = this->count_publishers(cloud_topic);
+    const double resubscribe_age_sec =
+      static_cast<double>(now_ns - last_resubscribe_ns_.load()) / 1e9;
+    const bool cooldown_ok = resubscribe_age_sec >= resubscribe_cooldown_sec_;
+    const bool can_resubscribe =
+      always_subscribe_ && auto_resubscribe_on_stall_ && cloud_publishers > 0 && cooldown_ok;
+    const bool should_exit = exit_on_cloud_stall_ && cloud_publishers > 0;
+
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000,
+      "No cloud received for %.2fs (last scan %.2fs). topic='%s', publishers=%zu, "
+      "subscriber_active=%s, auto_resubscribe=%s, cooldown_ok=%s",
+      cloud_age_sec,
+      scan_age_sec,
+      cloud_topic.c_str(),
+      cloud_publishers,
+      sub_.getSubscriber() ? "true" : "false",
+      auto_resubscribe_on_stall_ ? "true" : "false",
+      cooldown_ok ? "true" : "false");
+
+    if (should_exit) {
+      RCLCPP_FATAL(
+        this->get_logger(),
+        "Cloud stall detected with active publishers on '%s'. Exiting process to let launch respawn.",
+        cloud_topic.c_str());
+      std::_Exit(EXIT_FAILURE);
+    }
+
+    if (can_resubscribe) {
+      RCLCPP_WARN(this->get_logger(), "Stall detected with active publishers; resubscribing to cloud_in");
+      resubscribe();
+    }
+  } else {
+    // Clouds are arriving but scans are not published
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(), *this->get_clock(), 5000,
+      "Clouds arriving (last %.2fs ago) but no LaserScan for %.2fs. "
+      "Check point filter params (height/range/angle) or TF.",
+      cloud_age_sec, scan_age_sec);
+  }
 }
 
 void PointCloudToLaserScanNode::subscriptionListenerThreadLoop()
@@ -161,8 +270,7 @@ void PointCloudToLaserScanNode::subscriptionListenerThreadLoop()
         RCLCPP_INFO(
           this->get_logger(),
           "Got a subscriber to laserscan, starting pointcloud subscriber");
-        rclcpp::SensorDataQoS qos;
-        qos.keep_last(input_queue_size_);
+        const auto qos = makeInputQos();
         sub_.subscribe(this, "cloud_in", qos.get_rmw_qos_profile());
       }
     } else if (sub_.getSubscriber()) {
@@ -180,6 +288,13 @@ void PointCloudToLaserScanNode::subscriptionListenerThreadLoop()
 void PointCloudToLaserScanNode::cloudCallback(
   sensor_msgs::msg::PointCloud2::ConstSharedPtr cloud_msg)
 {
+  RCLCPP_WARN_THROTTLE(
+    this->get_logger(), *this->get_clock(), 5000,
+    "Received pointcloud with %d data points and frame_id=%s",
+    cloud_msg->width * cloud_msg->height, cloud_msg->header.frame_id.c_str());
+
+  last_cloud_ns_.store(this->now().nanoseconds());
+
   // build laserscan output
   auto scan_msg = std::make_unique<sensor_msgs::msg::LaserScan>();
   scan_msg->header = cloud_msg->header;
